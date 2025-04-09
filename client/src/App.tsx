@@ -1,4 +1,7 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import Itinerary from './pages/Itinerary';
+import Budget from './pages/Budget';
+import PackingList from './pages/PackingList';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import { AuthProvider } from './contexts/AuthContext';
@@ -50,6 +53,21 @@ function App() {
               <Route path="/trips/:id" element={
                 <PrivateRoute>
                   <TripDetails />
+                </PrivateRoute>
+              } />
+              <Route path="/trips/:id/itinerary" element={
+                <PrivateRoute>
+                  <Itinerary />
+                </PrivateRoute>
+              } />
+              <Route path="/trips/:id/budget" element={
+                <PrivateRoute>
+                  <Budget />
+                </PrivateRoute>
+              } />
+              <Route path="/trips/:id/packing" element={
+                <PrivateRoute>
+                  <PackingList />
                 </PrivateRoute>
               } />
             </Route>

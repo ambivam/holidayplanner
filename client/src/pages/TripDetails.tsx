@@ -1,28 +1,15 @@
 import React, { useState, useEffect } from 'react';
+import TripNavigation from '../components/TripNavigation';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Typography,
   Grid,
-  Paper,
-  Tabs,
-  Tab,
   Box,
   Button,
   Chip,
+  Paper,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-
-interface TabPanelProps {
-  children?: React.ReactNode;
-  index: number;
-  value: number;
-}
-
-const TabPanel: React.FC<TabPanelProps> = ({ children, value, index }) => (
-  <div hidden={value !== index}>
-    {value === index && <Box sx={{ p: 3 }}>{children}</Box>}
-  </div>
-);
 
 interface Trip {
   id: number;
@@ -37,7 +24,6 @@ interface Trip {
 const TripDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState(0);
   const [trip, setTrip] = useState<Trip | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -101,7 +87,7 @@ const TripDetails: React.FC = () => {
   }
 
   return (
-    <>
+    <Box sx={{ maxWidth: 1200, mx: 'auto', p: 3 }}>
       <Box sx={{ mb: 4 }}>
         <Button
           startIcon={<ArrowBackIcon />}
@@ -134,71 +120,38 @@ const TripDetails: React.FC = () => {
         </Grid>
       </Box>
 
-      <Paper sx={{ width: '100%' }}>
-        <Tabs
-          value={activeTab}
-          onChange={(_, newValue) => setActiveTab(newValue)}
-          indicatorColor="primary"
-          textColor="primary"
-        >
-          <Tab label="Overview" />
-          <Tab label="Itinerary" />
-          <Tab label="Budget" />
-          <Tab label="Packing List" />
-        </Tabs>
+      <TripNavigation />
 
-        <TabPanel value={activeTab} index={0}>
-          <Grid container spacing={3}>
-            <Grid item xs={12} md={6}>
-              <Typography variant="h6" gutterBottom>
-                Trip Details
-              </Typography>
-              <Typography paragraph>
-                <strong>Dates:</strong>{' '}
-                {new Date(trip.startDate).toLocaleDateString()} -{' '}
-                {new Date(trip.endDate).toLocaleDateString()}
-              </Typography>
-              <Typography paragraph>
-                <strong>Description:</strong> {trip.description}
-              </Typography>
-              <Typography>
-                <strong>Total Budget:</strong> ${trip.totalBudget}
-              </Typography>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <Typography variant="h6" gutterBottom>
-                Weather Forecast
-              </Typography>
-              {/* TODO: Add weather forecast component */}
-              <Typography color="textSecondary">
-                Weather forecast will be displayed here
-              </Typography>
-            </Grid>
+      <Paper sx={{ p: 3, mt: 3 }}>
+        <Grid container spacing={3}>
+          <Grid item xs={12} md={6}>
+            <Typography variant="h6" gutterBottom>
+              Trip Details
+            </Typography>
+            <Typography paragraph>
+              <strong>Dates:</strong>{' '}
+              {new Date(trip.startDate).toLocaleDateString()} -{' '}
+              {new Date(trip.endDate).toLocaleDateString()}
+            </Typography>
+            <Typography paragraph>
+              <strong>Description:</strong> {trip.description}
+            </Typography>
+            <Typography>
+              <strong>Total Budget:</strong> ${trip.totalBudget}
+            </Typography>
           </Grid>
-        </TabPanel>
-
-        <TabPanel value={activeTab} index={1}>
-          {/* TODO: Add itinerary component */}
-          <Typography color="textSecondary">
-            Itinerary will be displayed here
-          </Typography>
-        </TabPanel>
-
-        <TabPanel value={activeTab} index={2}>
-          {/* TODO: Add budget component */}
-          <Typography color="textSecondary">
-            Budget details will be displayed here
-          </Typography>
-        </TabPanel>
-
-        <TabPanel value={activeTab} index={3}>
-          {/* TODO: Add packing list component */}
-          <Typography color="textSecondary">
-            Packing list will be displayed here
-          </Typography>
-        </TabPanel>
+          <Grid item xs={12} md={6}>
+            <Typography variant="h6" gutterBottom>
+              Weather Forecast
+            </Typography>
+            {/* TODO: Add weather forecast component */}
+            <Typography color="textSecondary">
+              Weather forecast will be displayed here
+            </Typography>
+          </Grid>
+        </Grid>
       </Paper>
-    </>
+    </Box>
   );
 };
 
