@@ -1,5 +1,5 @@
 # Environment variables
-.env
+# All .env files are included in repository
 
 # Database files
 *.sqlite
