@@ -68,18 +68,32 @@ router.post('/trips/:tripId/budget', [
     .exists().withMessage('Amount is required')
     .notEmpty().withMessage('Amount cannot be empty')
     .custom((value) => {
-      console.log('Validating amount:', { value, type: typeof value });
-      if (!value && value !== 0) {
+      console.log('Validating amount:', { 
+        value, 
+        type: typeof value,
+        numberValue: Number(value),
+        floatValue: parseFloat(value)
+      });
+
+      if (value === undefined || value === null || value === '') {
         throw new Error('Amount is required');
       }
+
       const amount = parseFloat(value);
-      console.log('Parsed amount:', { amount, isNaN: isNaN(amount) });
-      if (isNaN(amount)) {
+      console.log('Parsed amount:', { 
+        amount, 
+        isNaN: isNaN(amount),
+        isFinite: isFinite(amount)
+      });
+
+      if (isNaN(amount) || !isFinite(amount)) {
         throw new Error('Amount must be a valid number');
       }
+
       if (amount <= 0) {
         throw new Error('Amount must be greater than 0');
       }
+
       return true;
     }),
   body('date')
@@ -98,11 +112,41 @@ router.post('/trips/:tripId/budget', [
       return true;
     }),
 ], async (req, res) => {
-  console.log('Received budget item:', {
+  console.log('Received budget item request:', {
     body: req.body,
     headers: req.headers,
     params: req.params,
-    user: req.user
+    user: req.user,
+    contentType: req.headers['content-type'],
+    method: req.method,
+    rawBody: req.rawBody
+  });
+
+  // Log validation of each field
+  const { category, description, amount, date } = req.body;
+  console.log('Validating fields:', {
+    category: {
+      value: category,
+      type: typeof category,
+      valid: Boolean(category?.trim())
+    },
+    description: {
+      value: description,
+      type: typeof description,
+      valid: Boolean(description?.trim())
+    },
+    amount: {
+      value: amount,
+      type: typeof amount,
+      parsed: parseFloat(amount),
+      valid: !isNaN(parseFloat(amount)) && isFinite(parseFloat(amount)) && parseFloat(amount) > 0
+    },
+    date: {
+      value: date,
+      type: typeof date,
+      parsed: new Date(date),
+      valid: !isNaN(new Date(date).getTime())
+    }
   });
   try {
     const errors = validationResult(req);
@@ -139,12 +183,53 @@ router.post('/trips/:tripId/budget', [
     }
 
     // Validate amount
-    const parsedAmount = parseFloat(amount);
-    if (isNaN(parsedAmount) || parsedAmount <= 0) {
-      return res.status(400).json({ 
-        message: 'Amount must be a valid number greater than 0',
-        field: 'amount'
+    console.log('Validating final amount:', {
+      raw: amount,
+      type: typeof amount,
+      parsed: parseFloat(amount),
+      number: Number(amount)
+    });
+
+    // Create the budget item
+    try {
+      const itemData = {
+        tripId: parseInt(tripId, 10),
+        category: category.trim(),
+        description: description.trim(),
+        amount: parseFloat(amount),
+        date: new Date(date)
+      };
+
+      console.log('Creating budget item with data:', {
+        ...itemData,
+        rawAmount: amount,
+        parsedAmount: parseFloat(amount)
       });
+
+      const item = await BudgetItem.create(itemData);
+      console.log('Created budget item:', item.toJSON());
+      res.status(201).json(item);
+    } catch (error) {
+      console.error('Error creating budget item:', {
+        error: error.message,
+        name: error.name,
+        validationError: error.name === 'SequelizeValidationError',
+        errors: error.errors
+      });
+
+      if (error.name === 'SequelizeValidationError') {
+        const validationError = error.errors[0];
+        return res.status(400).json({
+          message: validationError.message,
+          field: validationError.path,
+          errors: error.errors.map(err => ({
+            message: err.message,
+            field: err.path
+          }))
+        });
+      }
+
+      throw error; // Let the outer catch handle other errors
     }
 
     // Parse and validate date

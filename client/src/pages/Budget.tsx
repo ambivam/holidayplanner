@@ -107,7 +107,10 @@ const Budget: React.FC = () => {
     }
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) {
+      e.preventDefault();
+    }
     try {
       if (!tripId) {
         setError('Trip ID is missing');
@@ -152,40 +155,74 @@ const Budget: React.FC = () => {
         return;
       }
 
-      // Validate amount
-      const amountStr = currentItem.amount?.toString() || '';
-      if (!amountStr.trim()) {
-        setError('Amount is required');
-        return;
-      }
-      const amount = parseFloat(amountStr);
-      if (isNaN(amount)) {
-        setError('Amount must be a valid number');
-        return;
-      }
-      if (amount <= 0) {
-        setError('Amount must be greater than 0');
+      // Validate all fields
+      if (!currentItem.category?.trim()) {
+        setError('Category is required');
         return;
       }
 
-      // Validate date
+      if (!currentItem.description?.trim()) {
+        setError('Description is required');
+        return;
+      }
+
       if (!currentItem.date) {
         setError('Date is required');
         return;
       }
+
       const date = new Date(currentItem.date);
       if (isNaN(date.getTime())) {
         setError('Invalid date format');
         return;
       }
 
+      if (!currentItem.amount) {
+        setError('Amount is required');
+        return;
+      }
+
+      const numericAmount = parseFloat(currentItem.amount);
+      console.log('Validating amount:', {
+        raw: currentItem.amount,
+        parsed: numericAmount,
+        isNaN: isNaN(numericAmount),
+        isFinite: isFinite(numericAmount),
+        isPositive: numericAmount > 0
+      });
+
+      if (isNaN(numericAmount) || !isFinite(numericAmount)) {
+        setError('Amount must be a valid number');
+        return;
+      }
+
+      if (numericAmount <= 0) {
+        setError('Amount must be greater than 0');
+        return;
+      }
+
+      if (!currentItem.date) {
+        setError('Date is required');
+        return;
+      }
+
       const requestBody = {
         category: currentItem.category.trim(),
         description: currentItem.description.trim(),
-        amount: amount,
-        date: date.toISOString()
+        amount: numericAmount.toFixed(2), // Format to 2 decimal places
+        date: new Date(currentItem.date).toISOString()
       };
-      console.log('Submitting budget item:', requestBody);
+      
+      console.log('Submitting budget item:', {
+        raw: currentItem,
+        processed: requestBody,
+        validation: {
+          categoryValid: Boolean(currentItem.category?.trim()),
+          descriptionValid: Boolean(currentItem.description?.trim()),
+          amountValid: !isNaN(numericAmount) && isFinite(numericAmount) && numericAmount > 0,
+          dateValid: Boolean(currentItem.date)
+        }
+      });
 
       const response = await fetch(url, {
         method,
@@ -197,26 +234,50 @@ const Budget: React.FC = () => {
       });
 
       const data = await response.json();
-      console.log('Server response:', { status: response.status, data });
+      console.log('Server response:', { 
+        status: response.status, 
+        statusText: response.statusText,
+        data,
+        headers: Object.fromEntries(response.headers.entries())
+      });
       
       if (!response.ok) {
-        const errorMessage = data.message || 'Error saving budget item';
-        const fieldName = data.field ? `${data.field.charAt(0).toUpperCase()}${data.field.slice(1)}` : '';
-        setError(fieldName ? `${fieldName}: ${errorMessage}` : errorMessage);
         console.error('Budget item creation failed:', { 
           status: response.status,
-          error: errorMessage, 
-          field: data.field,
-          data: data
+          statusText: response.statusText,
+          data,
+          errors: data.errors,
+          requestBody,
+          currentItem
         });
+
+        // Handle validation errors
+        if (data.errors && Array.isArray(data.errors)) {
+          const errorMessages = data.errors.map((err: any) => {
+            const field = err.field ? `${err.field.charAt(0).toUpperCase()}${err.field.slice(1)}` : '';
+            return field ? `${field}: ${err.message}` : err.message;
+          });
+          setError(errorMessages.join('\n'));
+        } else {
+          const errorMessage = data.message || 'Error saving budget item';
+          const fieldName = data.field ? `${data.field.charAt(0).toUpperCase()}${data.field.slice(1)}` : '';
+          setError(fieldName ? `${fieldName}: ${errorMessage}` : errorMessage);
+        }
         return;
       }
 
-      // Clear error and refresh data before closing dialog
+      // Clear error and refresh data
       setError(null);
       await fetchBudget();
-      // Close dialog after successful save
-      handleCloseDialog();
+      
+      // Close dialog and reset form
+      setOpenDialog(false);
+      setCurrentItem({
+        category: '',
+        description: '',
+        amount: '',
+        date: new Date().toISOString().split('T')[0],
+      });
     } catch (error) {
       console.error('Error saving budget item:', error);
       setError('Failed to save budget item. Please try again.');
@@ -265,14 +326,19 @@ const Budget: React.FC = () => {
   };
 
   const handleCloseDialog = () => {
-    setOpenDialog(false);
-    setEditItem(null);
+    // Reset form state
     setCurrentItem({
       category: '',
       description: '',
       amount: '',
-      date: '',
+      date: new Date().toISOString().split('T')[0], // Reset to today's date
     });
+    setEditItem(null);
+    
+    // Close the dialog
+    setOpenDialog(false);
+    
+    console.log('Dialog closed and form reset');
   };
 
   const totalBudget = budget?.totalBudget || 0;
@@ -399,10 +465,18 @@ const Budget: React.FC = () => {
         </List>
       </Paper>
 
-      <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="sm" fullWidth>
+      <Dialog 
+        open={openDialog} 
+        onClose={handleCloseDialog} 
+        maxWidth="sm" 
+        fullWidth
+        disableEscapeKeyDown={false}
+        onBackdropClick={handleCloseDialog}
+      >
         <DialogTitle>
           {editItem ? 'Edit Expense' : 'Add Expense'}
         </DialogTitle>
+        <form onSubmit={handleSubmit}>  
         <DialogContent>
           {error && (
             <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
@@ -462,10 +536,11 @@ const Budget: React.FC = () => {
         </DialogContent>
         <DialogActions>
           <Button onClick={handleCloseDialog}>Cancel</Button>
-          <Button onClick={handleSubmit} variant="contained">
-            {editItem ? 'Save' : 'Add'}
+          <Button type="submit" variant="contained" color="primary">
+            {editItem ? 'Save Changes' : 'Add Expense'}
           </Button>
         </DialogActions>
+        </form>
       </Dialog>
     </Box>
   );
