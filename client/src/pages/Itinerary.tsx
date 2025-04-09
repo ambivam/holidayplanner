@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
+import { parseISO, isValid, format } from 'date-fns';
 import {
   Box,
   Button,
@@ -24,7 +25,7 @@ import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 
 interface ItineraryItem {
   id: number;
-  date: string;
+  date: string | Date;
   activity: string;
   location: string;
   notes?: string;
@@ -74,29 +75,72 @@ const Itinerary = (): JSX.Element => {
   };
 
   const handleFieldChange = (name: string, value: any): void => {
+    console.log('Field change:', { name, value, type: typeof value });
+    
+    // Ensure date is always a Date object
+    if (name === 'date' && typeof value === 'string') {
+      value = new Date(value);
+    }
+
     setCurrentItem(prev => ({ ...prev, [name]: value }));
     const error = validateField(name, value);
     setErrors(prev => ({ ...prev, [name]: error }));
   };
 
   const fetchItinerary = async (): Promise<void> => {
-    if (!id) return;
+    if (!id) {
+      console.error('No trip ID available');
+      return;
+    }
 
     try {
+      console.log('Fetching itinerary for trip:', id);
       const response = await fetch(`http://localhost:5000/api/trips/${id}/itinerary`, {
         headers: {
+          'Content-Type': 'application/json',
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
       });
 
+      const data = await response.json();
+      console.log('Received itinerary data:', {
+        raw: data,
+        isArray: Array.isArray(data),
+        length: Array.isArray(data) ? data.length : 0,
+        type: typeof data
+      });
+
       if (!response.ok) {
-        const data = await response.json();
+        console.error('Failed to fetch itinerary:', {
+          status: response.status,
+          data,
+          headers: Object.fromEntries(response.headers.entries())
+        });
         setErrors({ submit: data.message || 'Failed to fetch itinerary' });
         return;
       }
 
-      const data = await response.json();
-      setItems(data);
+      // Ensure data is an array and process each item
+      const itemsArray = Array.isArray(data) ? data.map(item => ({
+        ...item,
+        date: new Date(item.date) // Convert date strings to Date objects
+      })) : [];
+
+      console.log('Processed items:', {
+        count: itemsArray.length,
+        items: itemsArray.map(item => ({
+          id: item.id,
+          date: item.date,
+          activity: item.activity,
+          dateValid: item.date instanceof Date && !isNaN(item.date.getTime())
+        }))
+      });
+
+      setItems(itemsArray);
+      console.log('Updated items state:', {
+        newItems: itemsArray,
+        count: itemsArray.length
+      });
     } catch (error) {
       console.error('Error fetching itinerary:', error);
       setErrors({ submit: 'Failed to fetch itinerary items' });
@@ -104,10 +148,17 @@ const Itinerary = (): JSX.Element => {
   };
 
   useEffect(() => {
+    console.log('Itinerary component mounted or id changed:', id);
     fetchItinerary();
   }, [id]);
 
-  const handleCloseDialog = (): void => {
+  // Add effect to log items state changes
+  useEffect(() => {
+    console.log('Items state updated:', items);
+  }, [items]);
+
+  const handleCloseDialog = () => {
+    setLoading(false);
     setOpenDialog(false);
     setEditItem(null);
     setCurrentItem({
@@ -117,6 +168,17 @@ const Itinerary = (): JSX.Element => {
       notes: ''
     });
     setErrors({});
+
+    // Refresh the list after closing dialog
+    fetchItinerary();
+  };
+
+  const handleError = () => {
+    setLoading(false);
+    setOpenDialog(false);
+    // Keep the form data but show errors
+    // Refresh the list to ensure it's in sync
+    fetchItinerary();
   };
 
   const handleSubmit = async (): Promise<void> => {
@@ -146,16 +208,88 @@ const Itinerary = (): JSX.Element => {
         ? `http://localhost:5000/api/trips/${id}/itinerary/${editItem.id}`
         : `http://localhost:5000/api/trips/${id}/itinerary`;
 
-      // Prepare the request body
+      // Validate required fields
+      const validationErrors: { [key: string]: string } = {};
+      
+      if (!(currentItem.date instanceof Date) || isNaN(currentItem.date.getTime())) {
+        validationErrors.date = 'Please select a valid date';
+      }
+      
+      if (!currentItem.activity?.trim()) {
+        validationErrors.activity = 'Activity is required';
+      }
+      
+      if (!currentItem.location?.trim()) {
+        validationErrors.location = 'Location is required';
+      }
+      
+      if (Object.keys(validationErrors).length > 0) {
+        setErrors(validationErrors);
+        setLoading(false);
+        return;
+      }
+
+      // Ensure we have a valid date
+      let dateToSend: Date;
+      try {
+        if (currentItem.date instanceof Date) {
+          dateToSend = currentItem.date;
+        } else {
+          dateToSend = parseISO(currentItem.date as string);
+        }
+
+        if (!isValid(dateToSend)) {
+          throw new Error('Invalid date');
+        }
+      } catch (error) {
+        console.error('Date validation error:', error);
+        setErrors({ date: 'Please select a valid date' });
+        setLoading(false);
+        return;
+      }
+
+      // Format date as ISO string
+      const formattedDate = format(dateToSend, "yyyy-MM-dd'T'HH:mm:ss'Z'");
+      
+      console.log('Date processing:', {
+        originalDate: currentItem.date,
+        dateToSend,
+        formattedDate,
+        isValid: isValid(dateToSend),
+        timestamp: dateToSend.getTime(),
+        type: typeof currentItem.date,
+        instanceOfDate: currentItem.date instanceof Date
+      });
+      
       const requestData = {
-        tripId: parseInt(id),
-        date: currentItem.date.toISOString(),
+        date: formattedDate,
         activity: currentItem.activity.trim(),
         location: currentItem.location.trim(),
         notes: currentItem.notes?.trim() || '',
       };
 
-      const response = await fetch(apiUrl, {
+      console.log('Sending date:', {
+        original: currentItem.date,
+        parsed: dateToSend,
+        formatted: requestData.date
+      });
+
+      // Log request data for debugging
+      console.log('Request data:', {
+        ...requestData,
+        rawDate: currentItem.date,
+        dateValid: !isNaN(currentItem.date.getTime())
+      });
+
+      console.log('Sending request:', {
+        url: apiUrl,
+        method,
+        requestData,
+        dateType: typeof requestData.date,
+        dateValid: !isNaN(new Date(requestData.date).getTime())
+      });
+
+    const response = await fetch(apiUrl, {
         method,
         headers: {
           'Content-Type': 'application/json',
@@ -164,31 +298,74 @@ const Itinerary = (): JSX.Element => {
         body: JSON.stringify(requestData),
       });
 
-      const data = await response.json();
+      interface ErrorResponse {
+        errors?: Array<{ field: string; msg: string; value?: any; location?: string }>;
+        field?: string;
+        message?: string;
+      }
 
-      if (!response.ok) {
-        if (data.field) {
-          setErrors({ [data.field]: data.message });
-        } else {
-          setErrors({ submit: data.message || 'Failed to save itinerary item' });
+      let parsedData: ItineraryItem | ErrorResponse | null = null;
+      try {
+        const responseText = await response.text();
+        console.log('Raw response:', responseText);
+        if (responseText) {
+          parsedData = JSON.parse(responseText);
         }
+      } catch (error) {
+        console.error('Error parsing response:', error);
+        setErrors({ submit: error instanceof Error ? error.message : 'Failed to parse server response' });
         setLoading(false);
         return;
       }
 
-      // Update local state
-      if (editItem) {
-        setItems(items.map(item => item.id === editItem.id ? data : item));
-      } else {
-        setItems([...items, data]);
+      if (!response.ok || !parsedData) {
+        const errorData = parsedData as ErrorResponse;
+        console.log('Error response:', {
+          status: response.status,
+          statusText: response.statusText,
+          errorData,
+          requestData,
+          headers: response.headers
+        });
+        
+        if (errorData?.errors?.length) {
+          // Handle validation errors
+          const newErrors: { [key: string]: string } = {};
+          errorData.errors.forEach(err => {
+            if (err.field) {
+              newErrors[err.field] = `${err.msg} (received: ${JSON.stringify(err.value)})`;
+              console.log(`Field error for ${err.field}:`, err);
+            }
+          });
+          setErrors(newErrors);
+        } else if (errorData?.field) {
+          setErrors({ [errorData.field]: errorData.message || 'Invalid field' });
+        } else {
+          setErrors({ submit: errorData?.message || 'Failed to save itinerary item' });
+        }
+        handleError();
+        return;
       }
+      
+      // At this point, parsedData is guaranteed to be ItineraryItem
+      const responseData = parsedData as ItineraryItem;
+      console.log('Successfully saved item:', responseData);
 
+      // Clear any existing errors on success
+      setErrors({});
+
+      // Close dialog first
       handleCloseDialog();
+
+      // Then refresh the list to ensure we have the latest data
+      await fetchItinerary();
+
+      // Log the final state
+      console.log('Final items state after refresh:', items);
     } catch (error) {
       console.error('Error saving itinerary item:', error);
       setErrors({ submit: error instanceof Error ? error.message : 'Failed to save itinerary item' });
-    } finally {
-      setLoading(false);
+      handleError();
     }
   };
 
@@ -307,8 +484,18 @@ const Itinerary = (): JSX.Element => {
           </List>
         </Paper>
 
-        <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="sm" fullWidth>
-          <DialogTitle>
+        <Dialog 
+          open={openDialog} 
+          onClose={handleCloseDialog} 
+          maxWidth="sm" 
+          fullWidth
+          aria-labelledby="itinerary-dialog-title"
+          disablePortal={false}
+          keepMounted={false}
+          disableEnforceFocus
+          disableRestoreFocus
+        >
+          <DialogTitle id="itinerary-dialog-title">
             {editItem ? 'Edit Activity' : 'Add Activity'}
           </DialogTitle>
           <DialogContent>

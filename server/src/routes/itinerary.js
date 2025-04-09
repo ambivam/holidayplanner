@@ -17,12 +17,37 @@ router.get('/trips/:tripId/itinerary', auth, async (req, res) => {
       return res.status(404).json({ message: 'Trip not found' });
     }
 
+    console.log('Finding items for trip:', { 
+      tripId, 
+      userId: req.user.id,
+      parsedTripId: parseInt(tripId, 10)
+    });
+
     const items = await ItineraryItem.findAll({
-      where: { tripId },
+      where: { tripId: parseInt(tripId, 10) },
       order: [['date', 'ASC']],
     });
 
-    res.json(items);
+    // Log raw items and parsed items
+    console.log('Database query result:', {
+      count: items.length,
+      rawItems: items,
+      parsedItems: items.map(item => item.toJSON())
+    });
+
+    // Verify each item's data
+    const verifiedItems = items.map(item => {
+      const itemData = item.toJSON();
+      console.log('Processing item:', {
+        id: itemData.id,
+        tripId: itemData.tripId,
+        date: itemData.date,
+        activity: itemData.activity
+      });
+      return itemData;
+    });
+
+    res.json(verifiedItems);
   } catch (error) {
     console.error('Error fetching itinerary:', error);
     res.status(500).json({ message: 'Server error' });
@@ -31,10 +56,21 @@ router.get('/trips/:tripId/itinerary', auth, async (req, res) => {
 
 // Add new itinerary item
 router.post('/trips/:tripId/itinerary', [
+  express.json(),
+  (req, res, next) => {
+    console.log('Raw request body:', req.body);
+    next();
+  },
   logRequest,
   auth,
   (req, res, next) => {
-    console.log('Raw request body:', req.body);
+    console.log('Incoming request:', {
+      body: req.body,
+      headers: req.headers,
+      contentType: req.headers['content-type'],
+      method: req.method,
+      url: req.url
+    });
     next();
   },
   body('date')
@@ -42,17 +78,33 @@ router.post('/trips/:tripId/itinerary', [
     .withMessage('Date is required')
     .notEmpty()
     .withMessage('Date cannot be empty')
-    .isISO8601()
-    .withMessage('Date must be in ISO format')
-    .custom((value) => {
-      console.log('Validating date:', value);
+    .custom((value, { req }) => {
+      console.log('Validating date:', {
+        value,
+        type: typeof value,
+        body: req.body
+      });
       try {
+        // Try to parse the date
         const date = new Date(value);
         if (isNaN(date.getTime())) {
           throw new Error('Invalid date');
         }
+        
+        // Log successful parsing
+        console.log('Date validated successfully:', {
+          original: value,
+          parsed: date,
+          timestamp: date.getTime(),
+          iso: date.toISOString()
+        });
         return true;
       } catch (error) {
+        console.error('Date validation error:', {
+          error: error.message,
+          value,
+          type: typeof value
+        });
         throw new Error('Invalid date format');
       }
     }),
@@ -75,31 +127,42 @@ router.post('/trips/:tripId/itinerary', [
     .withMessage('Notes must be at most 1000 characters'),
 ], async (req, res) => {
   try {
-    // Log the raw request for debugging
-    console.log('Request details:', {
+    // Log detailed request information
+    console.log('Processing request:', {
       body: req.body,
       params: req.params,
       method: req.method,
-      path: req.path
+      path: req.path,
+      headers: req.headers,
+      contentType: req.headers['content-type'],
+      bodyKeys: Object.keys(req.body),
+      bodyTypes: Object.entries(req.body).map(([key, value]) => [key, typeof value]),
+      rawBody: req.body ? JSON.stringify(req.body) : undefined
     });
 
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       const validationErrors = errors.array();
       
-      // Log validation errors
+      // Log validation errors with detailed context
       console.log('Validation failed:', {
         body: req.body,
-        errors: validationErrors
+        rawBody: JSON.stringify(req.body),
+        contentType: req.headers['content-type'],
+        errors: validationErrors,
+        bodyKeys: Object.keys(req.body),
+        bodyTypes: Object.entries(req.body).map(([key, value]) => [key, typeof value])
       });
       
       return res.status(400).json({ 
-        message: validationErrors[0].msg,
+        message: 'Validation failed',
         errors: validationErrors.map(err => ({
           field: err.param,
           value: err.value,
-          msg: err.msg
-        }))
+          msg: err.msg,
+          location: err.location
+        })),
+        receivedBody: req.body
       });
     }
 
@@ -133,21 +196,68 @@ router.post('/trips/:tripId/itinerary', [
       });
     }
 
-    // Validate date
-    const parsedDate = new Date(date);
-    if (isNaN(parsedDate.getTime())) {
-      return res.status(400).json({ 
+    // Validate and parse the date
+    let parsedDate;
+    try {
+      if (!date) {
+        throw new Error('Date is required');
+      }
+
+      console.log('Attempting to parse date:', {
+        rawDate: date,
+        type: typeof date,
+        isString: typeof date === 'string',
+        isDate: date instanceof Date,
+        hasTime: typeof date === 'string' && date.includes('T')
+      });
+
+      parsedDate = new Date(date);
+      
+      console.log('Date parsing result:', {
+        input: date,
+        parsed: parsedDate,
+        timestamp: parsedDate.getTime(),
+        iso: parsedDate.toISOString(),
+        valid: !isNaN(parsedDate.getTime())
+      });
+
+      if (isNaN(parsedDate.getTime())) {
+        throw new Error('Invalid date value');
+      }
+    } catch (error) {
+      console.error('Date validation failed:', {
+        error: error.message,
+        receivedDate: date,
+        type: typeof date
+      });
+      return res.status(400).json({
         message: 'Invalid date format',
-        receivedDate: date
+        error: error.message,
+        receivedDate: date,
+        type: typeof date
       });
     }
 
-    const item = await ItineraryItem.create({
+    const itemData = {
       tripId: parseInt(tripId, 10),
       date: parsedDate,
       activity: activity.trim(),
       location: location.trim(),
       notes: notes ? notes.trim() : ''
+    };
+    console.log('Attempting to create item:', {
+      data: itemData,
+      tripId: itemData.tripId,
+      tripIdType: typeof itemData.tripId
+    });
+
+    const item = await ItineraryItem.create(itemData);
+    
+    console.log('Database response:', {
+      created: item ? true : false,
+      item: item ? item.toJSON() : null,
+      id: item ? item.id : null,
+      tripId: item ? item.tripId : null
     });
 
     console.log('Successfully created item:', item.toJSON());
