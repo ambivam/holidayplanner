@@ -1,19 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-  Typography,
-  Paper,
+  Box,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  IconButton,
   List,
   ListItem,
   ListItemText,
-  IconButton,
-  Button,
+  Paper,
   TextField,
-  Box,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
+  Typography,
   Grid,
   Alert,
 } from '@mui/material';
@@ -27,229 +27,207 @@ interface ItineraryItem {
   date: string;
   activity: string;
   location: string;
+  notes?: string;
+}
+
+interface CurrentItem {
+  date: Date;
+  activity: string;
+  location: string;
   notes: string;
 }
 
-const Itinerary: React.FC = () => {
+const Itinerary = (): JSX.Element => {
   const { id } = useParams<{ id: string }>();
   const [items, setItems] = useState<ItineraryItem[]>([]);
+  const [loading, setLoading] = useState(false);
   const [openDialog, setOpenDialog] = useState(false);
   const [editItem, setEditItem] = useState<ItineraryItem | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [currentItem, setCurrentItem] = useState({
+  const [currentItem, setCurrentItem] = useState<CurrentItem>({
     date: new Date(),
     activity: '',
     location: '',
-    notes: '',
+    notes: ''
   });
+  const [errors, setErrors] = useState<{ [key: string]: string }>({});
 
-  useEffect(() => {
-    if (id) {
-      fetchItinerary();
+  const validateField = (name: string, value: any): string => {
+    switch (name) {
+      case 'activity':
+        if (!value?.trim()) return 'Activity is required';
+        if (value.trim().length > 255) return 'Activity must be at most 255 characters';
+        break;
+      case 'location':
+        if (!value?.trim()) return 'Location is required';
+        if (value.trim().length > 255) return 'Location must be at most 255 characters';
+        break;
+      case 'date':
+        if (!value || !(value instanceof Date) || isNaN(value.getTime())) {
+          return 'Please select a valid date and time';
+        }
+        break;
+      case 'notes':
+        if (value?.length > 1000) return 'Notes must be at most 1000 characters';
+        break;
     }
-  }, [id]);
+    return '';
+  };
 
-  const fetchItinerary = async () => {
+  const handleFieldChange = (name: string, value: any): void => {
+    setCurrentItem(prev => ({ ...prev, [name]: value }));
+    const error = validateField(name, value);
+    setErrors(prev => ({ ...prev, [name]: error }));
+  };
+
+  const fetchItinerary = async (): Promise<void> => {
+    if (!id) return;
+
     try {
-      if (!id) {
-        setError('Trip ID is missing');
-        return;
-      }
-
       const response = await fetch(`http://localhost:5000/api/trips/${id}/itinerary`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
       });
-      if (response.ok) {
+
+      if (!response.ok) {
         const data = await response.json();
-        setItems(data);
+        setErrors({ submit: data.message || 'Failed to fetch itinerary' });
+        return;
       }
+
+      const data = await response.json();
+      setItems(data);
     } catch (error) {
       console.error('Error fetching itinerary:', error);
+      setErrors({ submit: 'Failed to fetch itinerary items' });
     }
   };
 
-  const handleSubmit = async () => {
-    setError(null); // Clear any previous errors
+  useEffect(() => {
+    fetchItinerary();
+  }, [id]);
 
-    // Validate required fields
-    if (!currentItem.activity?.trim()) {
-      setError('Activity is required');
-      return;
-    }
-    if (currentItem.activity.trim().length > 255) {
-      setError('Activity must be at most 255 characters');
-      return;
-    }
+  const handleCloseDialog = (): void => {
+    setOpenDialog(false);
+    setEditItem(null);
+    setCurrentItem({
+      date: new Date(),
+      activity: '',
+      location: '',
+      notes: ''
+    });
+    setErrors({});
+  };
 
-    if (!currentItem.location?.trim()) {
-      setError('Location is required');
-      return;
-    }
-    if (currentItem.location.trim().length > 255) {
-      setError('Location must be at most 255 characters');
-      return;
-    }
+  const handleSubmit = async (): Promise<void> => {
+    setErrors({});
+    setLoading(true);
 
-    if (!currentItem.date || isNaN(currentItem.date.getTime())) {
-      setError('Please select a valid date and time');
-      return;
-    }
-
-    if (currentItem.notes?.length > 1000) {
-      setError('Notes must be at most 1000 characters');
-      return;
-    }
     try {
+      // Validate all fields
+      const newErrors: { [key: string]: string } = {};
+      Object.entries(currentItem).forEach(([key, value]) => {
+        const error = validateField(key, value);
+        if (error) newErrors[key] = error;
+      });
+
+      if (Object.keys(newErrors).length > 0) {
+        setErrors(newErrors);
+        setLoading(false);
+        return;
+      }
+
       if (!id) {
         throw new Error('Trip ID is missing');
       }
 
       const method = editItem ? 'PUT' : 'POST';
-      const url = editItem 
+      const apiUrl = editItem 
         ? `http://localhost:5000/api/trips/${id}/itinerary/${editItem.id}`
         : `http://localhost:5000/api/trips/${id}/itinerary`;
 
-      if (!currentItem.date || !currentItem.activity || !currentItem.location) {
-        throw new Error('Please fill in all required fields');
-      }
-
-      // Validate required fields first
-      if (!currentItem.date || !(currentItem.date instanceof Date)) {
-        throw new Error('Date is required');
-      }
-      if (!currentItem.activity?.trim()) {
-        throw new Error('Activity is required');
-      }
-      if (!currentItem.location?.trim()) {
-        throw new Error('Location is required');
-      }
-
       // Prepare the request body
-      const requestBody = {
+      const requestData = {
+        tripId: parseInt(id),
         date: currentItem.date.toISOString(),
         activity: currentItem.activity.trim(),
         location: currentItem.location.trim(),
         notes: currentItem.notes?.trim() || '',
       };
 
-      // Log request details for debugging
-      console.log('Request details:', {
-        url,
-        method,
-        body: requestBody,
-        tripId: id,
-        date: {
-          raw: currentItem.date,
-          type: typeof currentItem.date,
-          isValid: currentItem.date instanceof Date,
-          timestamp: currentItem.date.getTime(),
-          iso: requestBody.date
-        }
-      });
-
-      // Additional validation
-      try {
-        new Date(requestBody.date); // Validate ISO string
-      } catch (error) {
-        throw new Error('Invalid date format');
-      }
-
-      const response = await fetch(url, {
+      const response = await fetch(apiUrl, {
         method,
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         },
-        body: JSON.stringify(requestBody)
-      });
-
-      console.log('Request sent:', {
-        url,
-        method,
-        body: requestBody
+        body: JSON.stringify(requestData),
       });
 
       const data = await response.json();
-      console.log('Server response:', {
-        status: response.status,
-        ok: response.ok,
-        statusText: response.statusText,
-        data
-      });
-      
+
       if (!response.ok) {
-        if (data.errors && data.errors.length > 0) {
-          console.error('Validation errors:', data.errors);
-          const formattedErrors = data.errors.map((e: any) => {
-            return `${e.field}: ${e.msg} (received: ${JSON.stringify(e.value)})`;
-          });
-          throw new Error(formattedErrors.join('\n'));
+        if (data.field) {
+          setErrors({ [data.field]: data.message });
+        } else {
+          setErrors({ submit: data.message || 'Failed to save itinerary item' });
         }
-        throw new Error(data.message || 'Failed to save activity');
-      }
-
-      console.log('Successfully saved item:', data);
-
-      await fetchItinerary();
-      handleCloseDialog();
-    } catch (error) {
-      console.error('Error saving itinerary item:', error);
-      console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
-      setError(
-        error instanceof Error
-          ? error.message
-          : 'An unexpected error occurred while saving the activity'
-      );
-      return; // Don't close dialog on error
-    }
-  };
-
-  const handleDelete = async (itemId: number) => {
-    try {
-      if (!id) {
-        setError('Trip ID is missing');
+        setLoading(false);
         return;
       }
 
-      const response = await fetch(
-        `http://localhost:5000/api/trips/${id}/itinerary/${itemId}`,
-        {
-          method: 'DELETE',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
-          }
-        }
-      );
-
-      if (response.ok) {
-        fetchItinerary();
+      // Update local state
+      if (editItem) {
+        setItems(items.map(item => item.id === editItem.id ? data : item));
+      } else {
+        setItems([...items, data]);
       }
+
+      handleCloseDialog();
     } catch (error) {
-      console.error('Error deleting itinerary item:', error);
+      console.error('Error saving itinerary item:', error);
+      setErrors({ submit: error instanceof Error ? error.message : 'Failed to save itinerary item' });
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleOpenDialog = (item?: ItineraryItem) => {
-    setError(null); // Clear any previous errors
+  const handleDelete = async (itemId: number): Promise<void> => {
+    try {
+      if (!id) {
+        setErrors({ submit: 'Trip ID is missing' });
+        return;
+      }
+
+      const response = await fetch(`http://localhost:5000/api/trips/${id}/itinerary/${itemId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        setErrors({ submit: data.message || 'Failed to delete itinerary item' });
+        return;
+      }
+
+      // Update local state
+      setItems(items.filter(item => item.id !== itemId));
+    } catch (error) {
+      console.error('Error deleting itinerary item:', error);
+      setErrors({ submit: 'Failed to delete itinerary item' });
+    }
+  };
+
+  const handleOpenDialog = (item?: ItineraryItem): void => {
+    setErrors({});
     if (item) {
       setEditItem(item);
-      let date: Date;
-      try {
-        date = new Date(item.date);
-        if (isNaN(date.getTime())) {
-          console.warn('Invalid date from item:', item.date);
-          date = new Date();
-        }
-      } catch (error) {
-        console.error('Error parsing date:', error);
-        date = new Date();
-      }
       setCurrentItem({
-        date,
-        activity: item.activity || '',
-        location: item.location || '',
+        date: new Date(item.date),
+        activity: item.activity,
+        location: item.location,
         notes: item.notes || '',
       });
     } else {
@@ -262,17 +240,6 @@ const Itinerary: React.FC = () => {
       });
     }
     setOpenDialog(true);
-  };
-
-  const handleCloseDialog = () => {
-    setOpenDialog(false);
-    setEditItem(null);
-    setCurrentItem({
-      date: new Date(),
-      activity: '',
-      location: '',
-      notes: '',
-    });
   };
 
   return (
@@ -345,9 +312,9 @@ const Itinerary: React.FC = () => {
             {editItem ? 'Edit Activity' : 'Add Activity'}
           </DialogTitle>
           <DialogContent>
-            {error && (
-              <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-                {error}
+            {errors.submit && (
+              <Alert severity="error" sx={{ mb: 2 }} onClose={() => setErrors(prev => ({ ...prev, submit: '' }))}>
+                {errors.submit}
               </Alert>
             )}
             <Grid container spacing={2} sx={{ mt: 1 }}>
@@ -356,19 +323,15 @@ const Itinerary: React.FC = () => {
                   label="Date & Time *"
                   value={currentItem.date}
                   onChange={(newDate) => {
-                    if (newDate instanceof Date && !isNaN(newDate.getTime())) {
-                      setCurrentItem({ ...currentItem, date: newDate });
-                    } else if (newDate === null) {
-                      setCurrentItem({ ...currentItem, date: new Date() });
-                    }
+                    handleFieldChange('date', newDate instanceof Date ? newDate : new Date());
                   }}
                   slotProps={{
                     textField: {
                       fullWidth: true,
                       variant: 'outlined',
                       required: true,
-                      error: Boolean(error && error.includes('date')),
-                      helperText: error && error.includes('date') ? error : 'Required'
+                      error: Boolean(errors.date),
+                      helperText: errors.date || 'Required'
                     }
                   }}
                 />
@@ -376,17 +339,23 @@ const Itinerary: React.FC = () => {
               <Grid item xs={12}>
                 <TextField
                   fullWidth
-                  label="Activity"
+                  label="Activity *"
                   value={currentItem.activity}
-                  onChange={(e) => setCurrentItem({ ...currentItem, activity: e.target.value })}
+                  onChange={(e) => handleFieldChange('activity', e.target.value)}
+                  error={Boolean(errors.activity)}
+                  helperText={errors.activity || 'Required'}
+                  required
                 />
               </Grid>
               <Grid item xs={12}>
                 <TextField
                   fullWidth
-                  label="Location"
+                  label="Location *"
                   value={currentItem.location}
-                  onChange={(e) => setCurrentItem({ ...currentItem, location: e.target.value })}
+                  onChange={(e) => handleFieldChange('location', e.target.value)}
+                  error={Boolean(errors.location)}
+                  helperText={errors.location || 'Required'}
+                  required
                 />
               </Grid>
               <Grid item xs={12}>
@@ -396,15 +365,21 @@ const Itinerary: React.FC = () => {
                   multiline
                   rows={3}
                   value={currentItem.notes}
-                  onChange={(e) => setCurrentItem({ ...currentItem, notes: e.target.value })}
+                  onChange={(e) => handleFieldChange('notes', e.target.value)}
+                  error={Boolean(errors.notes)}
+                  helperText={errors.notes}
                 />
               </Grid>
             </Grid>
           </DialogContent>
           <DialogActions>
-            <Button onClick={handleCloseDialog}>Cancel</Button>
-            <Button onClick={handleSubmit} variant="contained">
-              {editItem ? 'Save' : 'Add'}
+            <Button onClick={handleCloseDialog} disabled={loading}>Cancel</Button>
+            <Button 
+              onClick={handleSubmit} 
+              variant="contained" 
+              disabled={loading || Object.values(errors).some(error => error !== '')}
+            >
+              {loading ? 'Saving...' : editItem ? 'Save' : 'Add'}
             </Button>
           </DialogActions>
         </Dialog>
